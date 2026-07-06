@@ -1,0 +1,30 @@
+# Ignore everything by default
+*
+!.gitignore
+
+# But track pleiades/ directory
+!pleiades/
+!pleiades/**
+
+# Common Python/Jupyter files to ignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.ipynb_checkpoints/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PBS logs and output
+*.o[0-9]*
+*.e[0-9]*
+*.log

@@ -1,0 +1,45 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# Usage
+#   qsub -v EXP_NAME=control submit_convert_co2.pbs
+#   qsub -v EXP_NAME=exp1    submit_convert_co2.pbs
+#   qsub -v EXP_NAME=exp5    submit_convert_co2.pbs
+# ═══════════════════════════════════════════════════════════════════════════════
+#PBS -N oif_convert_co2
+#PBS -l select=1:ncpus=16:mem=64gb:model=sky_ele
+#PBS -l walltime=00:30:00
+#PBS -q devel
+#PBS -j oe
+#PBS -W group_list=s1353
+#PBS -o /home5/ksuselj1/nobackup/OIF/logs/convert_co2.log
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/post_script"
+SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
+K_MAX=10
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [[ -z "${EXP_NAME}" ]]; then
+    echo "ERROR: EXP_NAME not set. Submit with: qsub -v EXP_NAME=control submit_convert_co2.pbs"
+    exit 1
+fi
+
+mkdir -p "/home5/ksuselj1/nobackup/OIF/logs"
+
+source ~/python_env/ecco_darwin/bin/activate
+
+echo "====================================="
+echo "Job        : ${PBS_JOBID}"
+echo "Node       : $(hostname)"
+echo "Start      : $(date)"
+echo "Experiment : ${EXP_NAME}"
+echo "k_max      : ${K_MAX}"
+echo "====================================="
+
+DATA_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/${EXP_NAME}/run/diags/monthly"
+python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets co2
+
+echo ""
+echo "====================================="
+echo "End : $(date)"
+echo "====================================="

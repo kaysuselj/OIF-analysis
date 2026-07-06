@@ -1,0 +1,65 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# Convert a SINGLE dataset to NetCDF
+#
+# Usage (via submit_convert_parallel.sh):
+#   qsub -v EXP_NAME=control,DATASET=pft_lim1 submit_convert_single.pbs
+#
+# This script is called by submit_convert_parallel.sh to process datasets in parallel
+# ═══════════════════════════════════════════════════════════════════════════════
+#PBS -N oif_conv
+#PBS -l select=1:ncpus=4:mem=16gb:model=sky_ele
+#PBS -l walltime=06:00:00
+#PBS -q normal
+#PBS -j oe
+#PBS -W group_list=s1353
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/post_script"
+SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
+K_MAX=10
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [[ -z "${EXP_NAME}" ]]; then
+    echo "ERROR: EXP_NAME not set"
+    exit 1
+fi
+
+if [[ -z "${DATASET}" ]]; then
+    echo "ERROR: DATASET not set"
+    exit 1
+fi
+
+# Set log file with both experiment and dataset name
+LOG_DIR="/home5/ksuselj1/nobackup/OIF/logs"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/convert_${EXP_NAME}_${DATASET}.log"
+
+# Redirect output to log file
+exec > "${LOG_FILE}" 2>&1
+
+source ~/python_env/ecco_darwin/bin/activate
+
+echo "====================================="
+echo "Job        : ${PBS_JOBID}"
+echo "Node       : $(hostname)"
+echo "Start      : $(date)"
+echo "Experiment : ${EXP_NAME}"
+echo "Dataset    : ${DATASET}"
+echo "k_max      : ${K_MAX}"
+echo "====================================="
+
+DATA_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/${EXP_NAME}/run/diags/monthly"
+
+# Convert only the specified dataset
+python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets "${DATASET}"
+
+EXIT_CODE=$?
+
+echo ""
+echo "====================================="
+echo "Exit code  : ${EXIT_CODE}"
+echo "End        : $(date)"
+echo "====================================="
+
+exit ${EXIT_CODE}
