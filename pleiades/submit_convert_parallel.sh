@@ -1,11 +1,14 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # Submit parallel conversion jobs - one PBS job per dataset
+# Each job processes all 5-year chunks from 1992-2026
 #
 # Usage:
 #   ./submit_convert_parallel.sh control
 #   ./submit_convert_parallel.sh exp1
 #   ./submit_convert_parallel.sh exp5
+#
+# Sea ice is only converted for control experiment
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if [[ $# -lt 1 ]]; then
@@ -19,7 +22,6 @@ fi
 EXP_NAME="$1"
 
 # All datasets from convert_to_netcdf.py
-# pft_lim1, pft_lim2, pft_lim3, pft_lim4, pft_lim5, nutrients, co2, carbon_tracers
 DATASETS=(
     "pft_lim1"
     "pft_lim2"
@@ -31,8 +33,17 @@ DATASETS=(
     "carbon_tracers"
 )
 
+# Add sea_ice only for control experiment
+if [[ "${EXP_NAME}" == "control" ]]; then
+    DATASETS+=("sea_ice")
+fi
+
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo "Submitting parallel conversion jobs for experiment: ${EXP_NAME}"
+echo "Datasets: ${#DATASETS[@]} (each will process 7 five-year chunks: 1992-2026)"
+if [[ "${EXP_NAME}" == "control" ]]; then
+    echo "Note: Including sea_ice dataset for control experiment"
+fi
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -48,6 +59,7 @@ done
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo "All ${#DATASETS[@]} jobs submitted for ${EXP_NAME}"
+echo "Each job will process 7 five-year chunks (1992-2026)"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 echo "Monitor with: qstat -u \$USER"

@@ -1,15 +1,15 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# Convert a SINGLE dataset to NetCDF
+# Convert a SINGLE dataset to NetCDF in 5-year chunks
 #
 # Usage (via submit_convert_parallel.sh):
 #   qsub -v EXP_NAME=control,DATASET=pft_lim1 submit_convert_single.pbs
 #
-# This script is called by submit_convert_parallel.sh to process datasets in parallel
+# This script processes all 5-year chunks from 1992-2026 for the specified dataset
 # ═══════════════════════════════════════════════════════════════════════════════
 #PBS -N oif_conv
 #PBS -l select=1:ncpus=4:mem=16gb:model=sky_ele
-#PBS -l walltime=06:00:00
+#PBS -l walltime=12:00:00
 #PBS -q normal
 #PBS -j oe
 #PBS -W group_list=s1353
@@ -18,6 +18,17 @@
 BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/post_script"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
 K_MAX=10
+
+# Define 5-year chunks
+YEAR_RANGES=(
+    "1992:1996"
+    "1997:2001"
+    "2002:2006"
+    "2007:2011"
+    "2012:2016"
+    "2017:2021"
+    "2022:2026"
+)
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ -z "${EXP_NAME}" ]]; then
@@ -30,7 +41,7 @@ if [[ -z "${DATASET}" ]]; then
     exit 1
 fi
 
-# Set log file with both experiment and dataset name
+# Set log file with experiment and dataset name
 LOG_DIR="/home5/ksuselj1/nobackup/OIF/logs"
 mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/convert_${EXP_NAME}_${DATASET}.log"
@@ -40,26 +51,57 @@ exec > "${LOG_FILE}" 2>&1
 
 source ~/python_env/ecco_darwin/bin/activate
 
-echo "====================================="
+echo "═══════════════════════════════════════════════════════════════════════════════"
 echo "Job        : ${PBS_JOBID}"
 echo "Node       : $(hostname)"
 echo "Start      : $(date)"
 echo "Experiment : ${EXP_NAME}"
 echo "Dataset    : ${DATASET}"
 echo "k_max      : ${K_MAX}"
-echo "====================================="
+echo "Year chunks: ${#YEAR_RANGES[@]} (5-year chunks from 1992-2026)"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo ""
 
 DATA_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/${EXP_NAME}/run/diags/monthly"
 
-# Convert only the specified dataset
-python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets "${DATASET}"
+SUCCESS_COUNT=0
+FAIL_COUNT=0
 
-EXIT_CODE=$?
+# Loop over all 5-year chunks
+for YEAR_RANGE in "${YEAR_RANGES[@]}"; do
+    START_YEAR="${YEAR_RANGE%%:*}"
+    END_YEAR="${YEAR_RANGE##*:}"
 
-echo ""
-echo "====================================="
-echo "Exit code  : ${EXIT_CODE}"
-echo "End        : $(date)"
-echo "====================================="
+    echo "───────────────────────────────────────────────────────────────────────────────"
+    echo "Processing year range: ${START_YEAR}-${END_YEAR}"
+    echo "───────────────────────────────────────────────────────────────────────────────"
 
-exit ${EXIT_CODE}
+    python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets "${DATASET}" \
+        --start-year "${START_YEAR}" --end-year "${END_YEAR}" --skip-existing
+
+    if [[ $? -eq 0 ]]; then
+        ((SUCCESS_COUNT++))
+        echo "✓ Success: ${START_YEAR}-${END_YEAR}"
+    else
+        ((FAIL_COUNT++))
+        echo "✗ Failed: ${START_YEAR}-${END_YEAR}"
+    fi
+    echo ""
+done
+
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo "SUMMARY"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo "Total chunks   : ${#YEAR_RANGES[@]}"
+echo "Successful     : ${SUCCESS_COUNT}"
+echo "Failed/Skipped : ${FAIL_COUNT}"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo "End            : $(date)"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+
+# Exit with error if any chunks failed
+if [[ ${FAIL_COUNT} -gt 0 ]]; then
+    exit 1
+else
+    exit 0
+fi

@@ -4,13 +4,27 @@ Convert ECCO-Darwin MDS binary output to NetCDF.
 
 Usage
 -----
-    python convert_to_netcdf.py <data_dir> [--k_max 10] [--datasets pft_lim1 pft_lim2 nutrients]
+    # Convert all years, all datasets
+    python convert_to_netcdf.py <data_dir> [--k_max 10]
+
+    # Convert specific 5-year period (only reads those iterations)
+    python convert_to_netcdf.py <data_dir> --start-year 1992 --end-year 1996
+
+    # Convert specific datasets only
+    python convert_to_netcdf.py <data_dir> --datasets co2 nutrients
+
+    # Combine options
+    python convert_to_netcdf.py <data_dir> --start-year 1992 --end-year 1996 \
+        --datasets co2 --k_max 10 --skip-existing
 
 Output
 ------
 Creates <data_dir>_netcdf/ and writes one NetCDF file per dataset defined in
 DATASETS below.  Variables with a k (depth) dimension are truncated to the
 top k_max levels.  Surface-only variables (no k) are written in full.
+
+When year range is specified, output files are named with suffix:
+    co2_1992-1996.nc, nutrients_1992-1996.nc, etc.
 
 Extending
 ---------
@@ -99,6 +113,12 @@ _extra_carbon_tracers = {
                    attrs={'long_name': 'Alkalinity',                 'units': 'meq m-3'}),
 }
 
+# Sea ice variables (2D surface fields — no k dimension)
+_extra_sea_ice = {
+    'SIarea  ': dict(dims=['j', 'i'],
+                     attrs={'long_name': 'Sea Ice Area Fraction', 'units': 'fraction'}),
+}
+
 # ── Dataset definitions ───────────────────────────────────────────────────────
 # Each key → one NetCDF output file.
 # To add a new group: append an entry here and define _extra_* above if needed.
@@ -128,6 +148,12 @@ DATASETS = {
         'extra_variables': _extra_carbon_tracers,
         'output_file':     'carbon_tracers.nc',
         'rename':          {'TRAC01': 'DIC', 'TRAC08': 'DOC', 'TRAC18': 'ALK'},
+    },
+    'sea_ice': {
+        'prefixes':        ['SIarea'],
+        'extra_variables': _extra_sea_ice,
+        'output_file':     'sea_ice.nc',
+        'rename':          {'SIarea  ': 'SIarea'},
     },
     # ── Add new groups below ──────────────────────────────────────────────────
     # 'example': {
@@ -204,55 +230,143 @@ def _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600):
     return ds
 
 
-def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False):
-    out_path = os.path.join(out_dir, cfg['output_file'])
+def _calculate_iteration_range(start_year, end_year, start_date='1992-01-01', delta_t=3600):
+    """
+    Calculate iteration range for a given year range.
 
+    Parameters:
+    -----------
+    start_year : int
+        Start year (inclusive)
+    end_year : int
+        End year (inclusive)
+    start_date : str
+        Reference start date for iter=2 (default: '1992-01-01')
+    delta_t : float
+        Time step in seconds (default: 3600 = 1 hour)
+
+    Returns:
+    --------
+    tuple : (start_iter, end_iter)
+    """
+    reference_iter = 2
+    reference_date = np.datetime64(start_date)
+
+    # Calculate start iteration (beginning of start_year)
+    target_start = np.datetime64(f'{start_year}-01-01')
+    seconds_to_start = (target_start - reference_date) / np.timedelta64(1, 's')
+    start_iter = int(reference_iter + seconds_to_start / delta_t)
+
+    # Calculate end iteration (end of end_year)
+    target_end = np.datetime64(f'{end_year + 1}-01-01')  # exclusive end
+    seconds_to_end = (target_end - reference_date) / np.timedelta64(1, 's')
+    end_iter = int(reference_iter + seconds_to_end / delta_t)
+
+    return start_iter, end_iter
+
+
+def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
+                    start_year=None, end_year=None):
+    """
+    Convert a single dataset from MDS binary to NetCDF.
+
+    Parameters:
+    -----------
+    start_year : int, optional
+        If specified, only read data from this year onwards
+    end_year : int, optional
+        If specified, only read data up to and including this year
+
+    Returns:
+    --------
+    bool : True if successful, False if skipped or failed
+    """
     print(f'[{name}]')
     print(f'  Prefixes  : {cfg["prefixes"]}')
-    print(f'  Output    : {out_path}')
+
+    # Determine iteration range if year range is specified
+    iters = None
+    year_suffix = ''
+    if start_year is not None and end_year is not None:
+        start_iter, end_iter = _calculate_iteration_range(start_year, end_year)
+        iters = list(range(start_iter, end_iter + 1))
+        year_suffix = f'_{start_year}-{end_year}'
+        print(f'  Year range: {start_year}-{end_year}')
+        print(f'  Iterations: {start_iter} to {end_iter} ({len(iters)} iterations)')
+
+    # Build output filename with year range suffix if specified
+    base_name = cfg['output_file'].replace('.nc', '')
+    out_filename = f'{base_name}{year_suffix}.nc'
+    out_path = os.path.join(out_dir, out_filename)
 
     # Check if output file already exists
     if skip_existing and os.path.exists(out_path):
         print(f'  Skipping  : File already exists\n')
-        return
+        return True
 
-    ds = xmitgcm.open_mdsdataset(
-        data_dir=data_dir,
-        grid_dir=GRID_DIR,
-        geometry='llc',
-        prefix=cfg['prefixes'],
-        extra_variables=cfg.get('extra_variables', {}),
-        ignore_unknown_vars=True,
-    )
+    try:
+        # Open dataset - only read specified iterations if provided
+        ds = xmitgcm.open_mdsdataset(
+            data_dir=data_dir,
+            grid_dir=GRID_DIR,
+            geometry='llc',
+            prefix=cfg['prefixes'],
+            iters=iters,
+            extra_variables=cfg.get('extra_variables', {}),
+            ignore_unknown_vars=True,
+        )
+    except (FileNotFoundError, ValueError, OSError) as e:
+        print(f'  ERROR     : No data files found for these prefixes/iterations')
+        print(f'              {str(e)}')
+        print(f'  Skipping  : {name}\n')
+        return False
 
-    if cfg.get('rename'):
-        ds = ds.rename(cfg['rename'])
+    # Check if dataset is empty
+    if 'time' in ds.dims and len(ds.time) == 0:
+        print(f'  WARNING   : Dataset is empty (no time steps found)')
+        print(f'  Skipping  : {name}\n')
+        ds.close()
+        return False
 
-    # Add proper time coordinate (convert from iteration numbers to datetime)
-    if 'time' in ds.dims:
-        n_times_before = len(ds.time)
-        print(f'  Time steps: {n_times_before} (converting iterations to datetime)')
-        ds = _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600)
-        print(f'  Time range: {ds.time.values[0]} to {ds.time.values[-1]}')
+    try:
+        if cfg.get('rename'):
+            ds = ds.rename(cfg['rename'])
 
-    k_size = len(ds['k']) if 'k' in ds.dims else 0
-    if k_size and k_max < k_size:
-        print(f'  k levels  : {k_size} → keeping top {k_max}')
-        ds = _truncate_k(ds, k_max)
-    elif k_size:
-        print(f'  k levels  : {k_size} (all kept, k_max={k_max})')
-    else:
-        print(f'  k levels  : none (surface field)')
+        # Add proper time coordinate (convert from iteration numbers to datetime)
+        if 'time' in ds.dims:
+            n_times_before = len(ds.time)
+            print(f'  Time steps: {n_times_before} (converting iterations to datetime)')
+            ds = _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600)
+            print(f'  Time range: {ds.time.values[0]} to {ds.time.values[-1]}')
 
-    print(f'  Writing ...')
-    ds.to_netcdf(out_path, encoding=_build_encoding(ds))
-    ds.close()
-    print(f'  Done.\n')
+        k_size = len(ds['k']) if 'k' in ds.dims else 0
+        if k_size and k_max < k_size:
+            print(f'  k levels  : {k_size} → keeping top {k_max}')
+            ds = _truncate_k(ds, k_max)
+        elif k_size:
+            print(f'  k levels  : {k_size} (all kept, k_max={k_max})')
+        else:
+            print(f'  k levels  : none (surface field)')
+
+        print(f'  Writing   : {out_filename}')
+        ds.to_netcdf(out_path, encoding=_build_encoding(ds))
+        ds.close()
+        print(f'  Done.\n')
+        return True
+
+    except Exception as e:
+        print(f'  ERROR     : Failed to process dataset')
+        print(f'              {str(e)}')
+        print(f'  Skipping  : {name}\n')
+        if 'ds' in locals():
+            ds.close()
+        return False
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert ECCO-Darwin MDS binary output to NetCDF.')
+        description='Convert ECCO-Darwin MDS binary output to NetCDF.',
+        epilog='Example: python convert_to_netcdf.py exp1/run --start-year 1992 --end-year 1996')
     parser.add_argument(
         'data_dir',
         help='Directory containing ECCO-Darwin binary files')
@@ -267,11 +381,24 @@ def main():
     parser.add_argument(
         '--skip-existing', action='store_true',
         help='Skip conversion if output file already exists')
+    parser.add_argument(
+        '--start-year', type=int, default=None,
+        help='Start year to extract (inclusive). Only reads iterations for this year range.')
+    parser.add_argument(
+        '--end-year', type=int, default=None,
+        help='End year to extract (inclusive). Must be used with --start-year.')
     args = parser.parse_args()
 
     data_dir = os.path.abspath(args.data_dir)
     if not os.path.isdir(data_dir):
         sys.exit(f'ERROR: {data_dir} does not exist.')
+
+    # Validate year range arguments
+    if (args.start_year is None) != (args.end_year is None):
+        sys.exit('ERROR: --start-year and --end-year must be used together.')
+    if args.start_year is not None and args.end_year is not None:
+        if args.start_year > args.end_year:
+            sys.exit(f'ERROR: start_year ({args.start_year}) must be <= end_year ({args.end_year}).')
 
     out_dir = data_dir + '_netcdf'
     os.makedirs(out_dir, exist_ok=True)
@@ -287,13 +414,39 @@ def main():
     print(f'k_max     : {args.k_max}')
     print(f'Datasets  : {to_run}')
     print(f'Skip exist: {args.skip_existing}')
+    if args.start_year is not None:
+        print(f'Year range: {args.start_year}-{args.end_year}')
     print()
 
-    for name in to_run:
-        convert_dataset(name, DATASETS[name], data_dir, out_dir, args.k_max,
-                       skip_existing=args.skip_existing)
+    # Track results
+    success_count = 0
+    skip_count = 0
+    fail_count = 0
 
-    print('All done.')
+    for name in to_run:
+        result = convert_dataset(name, DATASETS[name], data_dir, out_dir, args.k_max,
+                                skip_existing=args.skip_existing,
+                                start_year=args.start_year,
+                                end_year=args.end_year)
+        if result:
+            success_count += 1
+        else:
+            fail_count += 1
+
+    # Print summary
+    print('=' * 60)
+    print('SUMMARY')
+    print('=' * 60)
+    print(f'Total datasets  : {len(to_run)}')
+    print(f'Successful      : {success_count}')
+    print(f'Failed/Skipped  : {fail_count}')
+    print('=' * 60)
+
+    if fail_count > 0:
+        print(f'\nWARNING: {fail_count} dataset(s) failed or had no data.')
+        print('Check messages above for details.')
+
+    print('\nAll done.')
 
 
 if __name__ == '__main__':
