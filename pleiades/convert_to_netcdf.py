@@ -219,7 +219,7 @@ DATASETS = {
         'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
                             'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC',
                             'TRAC12': 'POC', 'TRAC15': 'POFe', 'TRAC16': 'POSi',
-                            'TRAC17': 'PIC', 'PP': 'NPP'},
+                            'TRAC17': 'PIC', 'primProd': 'NPP'},
     },
     'pft_biomass': {
         'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',
