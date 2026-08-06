@@ -217,18 +217,33 @@ DATASETS = {
         'output_file':     'sea_ice.nc',
         'rename':          {},
     },
-    # ── OIF Efficiency Analysis Datasets ──────────────────────────────────────
-    'efficiency_core': {
-        'prefixes':        ['primProd', 'CO2_flux', 'pCO2',
-                            'DIC', 'NO3', 'PO4', 'FeT', 'SiO2', 'DOC',
-                            'POC', 'POFe', 'POSi', 'PIC'],
-        'extra_variables': _extra_efficiency_core,
-        'output_file':     'efficiency_core.nc',
-        'rename':          {'PP': 'NPP', 'fluxCO2': 'CO2_flux',
-                            'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
-                            'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC',
-                            'TRAC12': 'POC', 'TRAC15': 'POFe', 'TRAC16': 'POSi',
-                            'TRAC17': 'PIC'},
+    # ── OIF Efficiency Analysis Datasets (split for manageability) ────────────
+    # Split 1: NPP and air-sea CO2 (for eta_upt, eta_as) - ESSENTIAL
+    'efficiency_npp_co2': {
+        'prefixes':        ['primProd', 'CO2_flux', 'pCO2'],
+        'extra_variables': {k: v for k, v in _extra_efficiency_core.items()
+                           if k in ['PP', 'fluxCO2', 'pCO2']},
+        'output_file':     'efficiency_npp_co2.nc',
+        'rename':          {'PP': 'NPP', 'fluxCO2': 'CO2_flux'},
+    },
+    # Split 2: Carbon export and ballast (for eta_exp, ballast correction) - ESSENTIAL
+    'efficiency_export': {
+        'prefixes':        ['POC', 'POSi', 'PIC', 'POFe'],
+        'extra_variables': {k: v for k, v in _extra_efficiency_core.items()
+                           if k in ['TRAC12', 'TRAC15', 'TRAC16', 'TRAC17']},
+        'output_file':     'efficiency_export.nc',
+        'rename':          {'TRAC12': 'POC', 'TRAC15': 'POFe',
+                           'TRAC16': 'POSi', 'TRAC17': 'PIC'},
+    },
+    # Split 3: DIC and nutrients (for eta_dur, budget closure) - ESSENTIAL
+    'efficiency_dic_nutrients': {
+        'prefixes':        ['DIC', 'NO3', 'PO4', 'FeT', 'SiO2', 'DOC'],
+        'extra_variables': {k: v for k, v in _extra_efficiency_core.items()
+                           if k in ['TRAC01', 'TRAC02', 'TRAC05', 'TRAC06',
+                                   'TRAC07', 'TRAC08']},
+        'output_file':     'efficiency_dic_nutrients.nc',
+        'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
+                           'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC'},
     },
     'pft_biomass': {
         'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',

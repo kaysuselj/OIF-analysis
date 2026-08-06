@@ -40,10 +40,14 @@ export OPENBLAS_NUM_THREADS=1
 
 # Longest-processing-time-first: launch the pft_lim datasets before the cheap ones
 # so a 271 s chunk never starts last and stretches the makespan.
-# OIF efficiency datasets added: efficiency_core (essential), pft_biomass, fe_budget (optional)
+# OIF efficiency datasets (split into 3 files for manageability):
+#   - efficiency_npp_co2: NPP, CO2_flux, pCO2 (for eta_upt, eta_as)
+#   - efficiency_export: POC, POSi, PIC, POFe (for eta_exp, ballast)
+#   - efficiency_dic_nutrients: DIC, nutrients (for eta_dur, budget)
 ALL_DATASETS=(pft_lim1 pft_lim2 pft_lim3 pft_lim4 pft_lim5
               nutrients carbon_tracers co2
-              efficiency_core pft_biomass fe_budget)
+              efficiency_npp_co2 efficiency_export efficiency_dic_nutrients
+              pft_biomass fe_budget)
 
 YEAR_RANGES=(
     "1992:1996"
