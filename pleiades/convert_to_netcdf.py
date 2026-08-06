@@ -127,6 +127,14 @@ _extra_sea_ice = {
 # ── OIF Efficiency Analysis Variables ─────────────────────────────────────────
 # Core diagnostics for computing η_upt, η_exp, η_dur, η_as
 _extra_efficiency_core = {
+    # Non-TRAC variables (field names from .meta files)
+    'PP': dict(dims=['k', 'j', 'i'],
+               attrs={'long_name': 'Primary Production', 'units': 'mmol C m-3 s-1'}),
+    'fluxCO2': dict(dims=['j', 'i'],
+                    attrs={'long_name': 'Air-sea CO2 flux', 'units': 'mmol C m-2 s-1'}),
+    'pCO2': dict(dims=['k', 'j', 'i'],
+                 attrs={'long_name': 'Partial pressure CO2', 'units': 'uatm'}),
+    # TRAC variables
     'TRAC01': dict(dims=['k', 'j', 'i'],
                    attrs={'long_name': 'Dissolved Inorganic Carbon', 'units': 'mmol C m-3'}),
     'TRAC02': dict(dims=['k', 'j', 'i'],
@@ -216,10 +224,11 @@ DATASETS = {
                             'POC', 'POFe', 'POSi', 'PIC'],
         'extra_variables': _extra_efficiency_core,
         'output_file':     'efficiency_core.nc',
-        'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
+        'rename':          {'PP': 'NPP', 'fluxCO2': 'CO2_flux',
+                            'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
                             'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC',
                             'TRAC12': 'POC', 'TRAC15': 'POFe', 'TRAC16': 'POSi',
-                            'TRAC17': 'PIC', 'primProd': 'NPP'},
+                            'TRAC17': 'PIC'},
     },
     'pft_biomass': {
         'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',
