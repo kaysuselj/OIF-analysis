@@ -1,66 +1,50 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# Submit parallel conversion jobs - one PBS job per dataset
-# Each job processes all 5-year chunks from 1992-2026
+# Submit conversion jobs — ONE PBS job per experiment.
+#
+# Each job gets one exclusive 40-core sky_ele node and runs every
+# (dataset x 5-year chunk) pair concurrently on it.
 #
 # Usage:
 #   ./submit_convert_parallel.sh control
-#   ./submit_convert_parallel.sh exp1
-#   ./submit_convert_parallel.sh exp5
+#   ./submit_convert_parallel.sh control exp1 exp5
+#   NCONC=16 ./submit_convert_parallel.sh control        # lower concurrency
 #
-# Sea ice is only converted for control experiment
+# Sea ice is only converted for the control experiment.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <experiment_name>"
+    echo "Usage: $0 <experiment_name> [more experiments...]"
     echo "  e.g., $0 control"
-    echo "        $0 exp1"
-    echo "        $0 exp5"
+    echo "        $0 control exp1 exp5"
     exit 1
 fi
 
-EXP_NAME="$1"
-
-# All datasets from convert_to_netcdf.py
-DATASETS=(
-    "pft_lim1"
-    "pft_lim2"
-    "pft_lim3"
-    "pft_lim4"
-    "pft_lim5"
-    "nutrients"
-    "co2"
-    "carbon_tracers"
-)
-
-# Add sea_ice only for control experiment
-if [[ "${EXP_NAME}" == "control" ]]; then
-    DATASETS+=("sea_ice")
-fi
+PBS_SCRIPT="submit_convert_experiment.pbs"
 
 echo "═══════════════════════════════════════════════════════════════════════════════"
-echo "Submitting parallel conversion jobs for experiment: ${EXP_NAME}"
-echo "Datasets: ${#DATASETS[@]} (each will process 7 five-year chunks: 1992-2026)"
-if [[ "${EXP_NAME}" == "control" ]]; then
-    echo "Note: Including sea_ice dataset for control experiment"
-fi
+echo "Submitting one conversion job per experiment: $*"
+echo "Each job: 1 node, 40 cores, all datasets x 7 five-year chunks (1992-2026)"
+[[ -n "${NCONC}" ]] && echo "Concurrency override: NCONC=${NCONC}"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 
-# Submit one job for each dataset
-for DATASET in "${DATASETS[@]}"; do
-    echo "Submitting job for dataset: ${DATASET}"
-    qsub -v EXP_NAME="${EXP_NAME}",DATASET="${DATASET}" submit_convert_single.pbs
+for EXP_NAME in "$@"; do
+    VARS="EXP_NAME=${EXP_NAME}"
+    [[ -n "${NCONC}" ]] && VARS="${VARS},NCONC=${NCONC}"
 
-    # Small delay to avoid overwhelming the scheduler
+    echo "Submitting job for experiment: ${EXP_NAME}"
+    [[ "${EXP_NAME}" == "control" ]] && echo "  (includes sea_ice)"
+    qsub -v "${VARS}" "${PBS_SCRIPT}"
+
     sleep 0.5
 done
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════════"
-echo "All ${#DATASETS[@]} jobs submitted for ${EXP_NAME}"
-echo "Each job will process 7 five-year chunks (1992-2026)"
+echo "Submitted $# job(s)"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 echo "Monitor with: qstat -u \$USER"
-echo "Check logs in: /home5/ksuselj1/nobackup/OIF/logs/convert_${EXP_NAME}_*.log"
+echo "Job logs    : /home5/ksuselj1/nobackup/OIF/logs/convert_<exp>.log"
+echo "Chunk logs  : /home5/ksuselj1/nobackup/OIF/logs/chunks/convert_<exp>_<dataset>_<years>.log"

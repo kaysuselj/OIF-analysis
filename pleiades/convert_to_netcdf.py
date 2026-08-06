@@ -41,10 +41,13 @@ dict above it:
 """
 
 import argparse
+import glob
 import os
+import re
 import sys
 
 import numpy as np
+import xarray as xr
 import xmitgcm
 
 # ── Grid directory ────────────────────────────────────────────────────────────
@@ -114,9 +117,11 @@ _extra_carbon_tracers = {
 }
 
 # Sea ice variables (2D surface fields — no k dimension)
+# The MDS .meta fldList pads names to 8 chars ('SIarea  '), but xmitgcm strips the
+# padding, so the variable arrives as 'SIarea' and needs no rename.
 _extra_sea_ice = {
-    'SIarea  ': dict(dims=['j', 'i'],
-                     attrs={'long_name': 'Sea Ice Area Fraction', 'units': 'fraction'}),
+    'SIarea': dict(dims=['j', 'i'],
+                   attrs={'long_name': 'Sea Ice Area Fraction', 'units': 'fraction'}),
 }
 
 # ── Dataset definitions ───────────────────────────────────────────────────────
@@ -153,7 +158,7 @@ DATASETS = {
         'prefixes':        ['SIarea'],
         'extra_variables': _extra_sea_ice,
         'output_file':     'sea_ice.nc',
-        'rename':          {'SIarea  ': 'SIarea'},
+        'rename':          {},
     },
     # ── Add new groups below ──────────────────────────────────────────────────
     # 'example': {
@@ -225,7 +230,9 @@ def _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600):
     ds['time'] = datetime_values
     ds.time.attrs['long_name'] = 'time'
     ds.time.attrs['standard_name'] = 'time'
-    ds.time.attrs['calendar'] = 'gregorian'
+    # NB: do not set a 'calendar' attribute here -- for datetime64 values xarray
+    # manages calendar/units as encoding on write; a 'calendar' key in .attrs makes
+    # to_netcdf raise "Key 'calendar' already exists in attrs on variable 'time'".
 
     return ds
 
@@ -265,6 +272,83 @@ def _calculate_iteration_range(start_year, end_year, start_date='1992-01-01', de
     return start_iter, end_iter
 
 
+def _available_iters(data_dir, prefixes, start_iter, end_iter):
+    """Iterations that actually exist on disk for ALL given prefixes, restricted to
+    [start_iter, end_iter]. MDS output is only written at specific (monthly)
+    iterations, so we must select the real ones rather than every integer in the
+    range -- xmitgcm errors if asked for an iteration with no file."""
+    per_prefix = []
+    for p in prefixes:
+        found = set()
+        pat = re.compile(rf'^{re.escape(p)}\.(\d+)\.data$')
+        for f in glob.glob(os.path.join(data_dir, f'{p}.*.data')):
+            m = pat.match(os.path.basename(f))
+            if m:
+                found.add(int(m.group(1)))
+        per_prefix.append(found)
+    if not per_prefix:
+        return []
+    common = set.intersection(*per_prefix) if len(per_prefix) > 1 else per_prefix[0]
+    return sorted(i for i in common if start_iter <= i <= end_iter)
+
+
+def _expected_iters(data_dir, prefixes, start_year=None, end_year=None):
+    """Iterations the MDS binaries actually hold for this dataset/window."""
+    if start_year is not None and end_year is not None:
+        start_iter, end_iter = _calculate_iteration_range(start_year, end_year)
+    else:
+        start_iter, end_iter = -1, 10 ** 18
+    return _available_iters(data_dir, prefixes, start_iter, end_iter)
+
+
+def _validate_output(out_path, n_expected):
+    """
+    Decide whether an existing NetCDF file is complete and usable.
+
+    A file counts as done only if it opens, its time axis decodes, and it holds
+    exactly as many timesteps as there are MDS files on disk.  A job killed
+    mid-write leaves a readable HDF5 skeleton whose time axis is all fill-value,
+    so an existence check alone is not enough to trust it.
+
+    Returns (ok, reason).
+    """
+    if not os.path.exists(out_path):
+        return False, 'not present'
+    try:
+        with xr.open_dataset(out_path) as ds:
+            if 'time' not in ds.dims:
+                return False, 'no time dimension'
+            n_found = len(ds.time)
+            if np.isnat(np.asarray(ds.time.values)).any():
+                return False, 'time axis has NaT (truncated write)'
+    except Exception as exc:
+        return False, f'unreadable ({type(exc).__name__})'
+
+    if n_found != n_expected:
+        return False, f'{n_found} timesteps on file, {n_expected} in MDS binaries'
+    return True, f'complete ({n_found} timesteps)'
+
+
+def _materialize(ds, max_inmem_gb=32.0):
+    """
+    Pull the dataset into memory before writing.
+
+    Writing straight from xmitgcm's dask arrays is pathologically slow: their
+    chunks are (1 time, 1 k, 1 face, 90, 90) = 32 kB, and every one of those tiny
+    blocks triggers a separate compressed HDF5 read-modify-write.  Loading first
+    turns the write into a few large sequential ones (measured ~167 s vs >8 min
+    for one 60-month pft_lim chunk).  Fall back to time-wise chunks if the
+    dataset is too big to hold in RAM.
+    """
+    nbytes = sum(v.nbytes for v in ds.data_vars.values())
+    if nbytes <= max_inmem_gb * 1e9:
+        print(f'  Loading   : {nbytes / 1e9:.2f} GB into memory')
+        return ds.load()
+    print(f'  Streaming : {nbytes / 1e9:.2f} GB exceeds {max_inmem_gb:.0f} GB; '
+          f'rechunking by time')
+    return ds.chunk({'time': 1})
+
+
 def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
                     start_year=None, end_year=None):
     """
@@ -284,25 +368,44 @@ def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
     print(f'[{name}]')
     print(f'  Prefixes  : {cfg["prefixes"]}')
 
-    # Determine iteration range if year range is specified
+    # Iterations the binaries hold for this window (drives both the read and the
+    # completeness check on any pre-existing output).
+    avail = _expected_iters(data_dir, cfg['prefixes'], start_year, end_year)
+
     iters = None
     year_suffix = ''
     if start_year is not None and end_year is not None:
         start_iter, end_iter = _calculate_iteration_range(start_year, end_year)
-        iters = list(range(start_iter, end_iter + 1))
+        iters = avail
         year_suffix = f'_{start_year}-{end_year}'
         print(f'  Year range: {start_year}-{end_year}')
-        print(f'  Iterations: {start_iter} to {end_iter} ({len(iters)} iterations)')
+        print(f'  Iterations: window {start_iter} to {end_iter}; '
+              f'{len(iters)} monthly file(s) present on disk')
+        if not iters:
+            print(f'  No data    : no files for {name} in {start_year}-{end_year}; '
+                  f'skipping this period\n')
+            return True
 
     # Build output filename with year range suffix if specified
     base_name = cfg['output_file'].replace('.nc', '')
     out_filename = f'{base_name}{year_suffix}.nc'
     out_path = os.path.join(out_dir, out_filename)
+    tmp_path = f'{out_path}.tmp'
 
-    # Check if output file already exists
-    if skip_existing and os.path.exists(out_path):
-        print(f'  Skipping  : File already exists\n')
-        return True
+    # Reuse an existing output only if it is readable AND complete.
+    if skip_existing:
+        ok, reason = _validate_output(out_path, len(avail))
+        if ok:
+            print(f'  Skipping  : {reason}\n')
+            return True
+        if os.path.exists(out_path):
+            print(f'  Redoing   : existing file rejected — {reason}')
+            os.remove(out_path)
+
+    # A previous kill can leave a partial .tmp behind; it is never reusable.
+    if os.path.exists(tmp_path):
+        print(f'  Cleaning  : removing stale {os.path.basename(tmp_path)}')
+        os.remove(tmp_path)
 
     try:
         # Open dataset - only read specified iterations if provided
@@ -332,13 +435,8 @@ def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
         if cfg.get('rename'):
             ds = ds.rename(cfg['rename'])
 
-        # Add proper time coordinate (convert from iteration numbers to datetime)
-        if 'time' in ds.dims:
-            n_times_before = len(ds.time)
-            print(f'  Time steps: {n_times_before} (converting iterations to datetime)')
-            ds = _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600)
-            print(f'  Time range: {ds.time.values[0]} to {ds.time.values[-1]}')
-
+        # Drop unwanted levels while the arrays are still lazy, so the deep data
+        # is never read off disk.
         k_size = len(ds['k']) if 'k' in ds.dims else 0
         if k_size and k_max < k_size:
             print(f'  k levels  : {k_size} → keeping top {k_max}')
@@ -348,9 +446,21 @@ def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
         else:
             print(f'  k levels  : none (surface field)')
 
+        # Add proper time coordinate (convert from iteration numbers to datetime)
+        if 'time' in ds.dims:
+            n_times_before = len(ds.time)
+            print(f'  Time steps: {n_times_before} (converting iterations to datetime)')
+            ds = _add_time_coordinate(ds, start_date='1992-01-01', delta_t=3600)
+            print(f'  Time range: {ds.time.values[0]} to {ds.time.values[-1]}')
+
+        ds = _materialize(ds)
+
+        # Write to a temp name and rename only on success, so a walltime kill can
+        # never leave a half-written file that later looks "already done".
         print(f'  Writing   : {out_filename}')
-        ds.to_netcdf(out_path, encoding=_build_encoding(ds))
+        ds.to_netcdf(tmp_path, encoding=_build_encoding(ds))
         ds.close()
+        os.replace(tmp_path, out_path)
         print(f'  Done.\n')
         return True
 
@@ -360,6 +470,8 @@ def convert_dataset(name, cfg, data_dir, out_dir, k_max, skip_existing=False,
         print(f'  Skipping  : {name}\n')
         if 'ds' in locals():
             ds.close()
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         return False
 
 
@@ -445,6 +557,7 @@ def main():
     if fail_count > 0:
         print(f'\nWARNING: {fail_count} dataset(s) failed or had no data.')
         print('Check messages above for details.')
+        sys.exit(1)
 
     print('\nAll done.')
 

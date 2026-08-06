@@ -1,23 +1,42 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
+# SUPERSEDED by submit_convert_experiment.pbs, which does all datasets of an
+# experiment in one job (and accepts -v DATASET=<name> for a single-dataset run).
+# Kept only as a fallback; submit_convert_parallel.sh no longer calls it.
+#
 # Convert a SINGLE dataset to NetCDF in 5-year chunks
 #
-# Usage (via submit_convert_parallel.sh):
+# Usage:
 #   qsub -v EXP_NAME=control,DATASET=pft_lim1 submit_convert_single.pbs
 #
 # This script processes all 5-year chunks from 1992-2026 for the specified dataset
 # ═══════════════════════════════════════════════════════════════════════════════
 #PBS -N oif_conv
-#PBS -l select=1:ncpus=4:mem=16gb:model=sky_ele
-#PBS -l walltime=12:00:00
+#PBS -l select=1:ncpus=40:mem=180gb:model=sky_ele
+# Chunks run concurrently, so a job takes about as long as its slowest chunk, not
+# the sum. Worst case is pft_lim* on control: 4 chunks, the longest 61 months at
+# ~4.4 core-s/month = ~4.5 min, plus ~30 s of module load and imports. Observed
+# 2:50-3:03 wall on 2026-07-09. ~6 min needed -> request 2x.
+#PBS -l walltime=00:12:00
 #PBS -q normal
 #PBS -j oe
 #PBS -W group_list=s1353
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/post_script"
+BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/OIF-analysis/pleiades"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
 K_MAX=10
+
+# The year chunks are independent (disjoint iterations, disjoint output files), so
+# run them side by side. PBS hands us the whole sky_ele node (40 cores) because
+# place=excl, but the serial loop only ever used one.
+NCONC="${NCONC:-7}"
+
+# Each chunk is single-threaded and CPU-bound in zlib; stop numpy/BLAS from
+# spawning a thread per core in every one of them.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
 
 # Define 5-year chunks
 YEAR_RANGES=(
@@ -59,33 +78,62 @@ echo "Experiment : ${EXP_NAME}"
 echo "Dataset    : ${DATASET}"
 echo "k_max      : ${K_MAX}"
 echo "Year chunks: ${#YEAR_RANGES[@]} (5-year chunks from 1992-2026)"
+echo "Concurrency: ${NCONC} chunks at once on $(nproc --all) cores"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 
 DATA_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/${EXP_NAME}/run/diags/monthly"
+CHUNK_LOG_DIR="${LOG_DIR}/chunks"
+mkdir -p "${CHUNK_LOG_DIR}"
 
 SUCCESS_COUNT=0
 FAIL_COUNT=0
+STATUS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/oif_status.XXXXXX")
+trap 'rm -rf "${STATUS_DIR}"' EXIT
 
-# Loop over all 5-year chunks
+# Launch every chunk; throttle to NCONC running at a time. Each task records its
+# own exit code, because `wait -n` in the throttle reaps children and the parent
+# then cannot `wait` on those PIDs individually.
 for YEAR_RANGE in "${YEAR_RANGES[@]}"; do
+    while (( $(jobs -rp | wc -l) >= NCONC )); do wait -n; done
+
     START_YEAR="${YEAR_RANGE%%:*}"
     END_YEAR="${YEAR_RANGE##*:}"
+    CHUNK_LOG="${CHUNK_LOG_DIR}/convert_${EXP_NAME}_${DATASET}_${START_YEAR}-${END_YEAR}.log"
 
-    echo "───────────────────────────────────────────────────────────────────────────────"
-    echo "Processing year range: ${START_YEAR}-${END_YEAR}"
-    echo "───────────────────────────────────────────────────────────────────────────────"
+    echo "→ launching ${START_YEAR}-${END_YEAR}  (log: ${CHUNK_LOG})"
+    (
+        python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets "${DATASET}" \
+            --start-year "${START_YEAR}" --end-year "${END_YEAR}" --skip-existing \
+            > "${CHUNK_LOG}" 2>&1
+        echo "$?" > "${STATUS_DIR}/${START_YEAR}-${END_YEAR}.status"
+    ) &
+done
 
-    python "${SCRIPT}" "${DATA_DIR}" --k_max "${K_MAX}" --datasets "${DATASET}" \
-        --start-year "${START_YEAR}" --end-year "${END_YEAR}" --skip-existing
+echo ""
+echo "Waiting for ${#YEAR_RANGES[@]} chunks..."
+echo ""
+wait
 
-    if [[ $? -eq 0 ]]; then
-        ((SUCCESS_COUNT++))
-        echo "✓ Success: ${START_YEAR}-${END_YEAR}"
+for YEAR_RANGE in "${YEAR_RANGES[@]}"; do
+    START_YEAR="${YEAR_RANGE%%:*}"; END_YEAR="${YEAR_RANGE##*:}"
+    RC=$(cat "${STATUS_DIR}/${START_YEAR}-${END_YEAR}.status" 2>/dev/null || echo 99)
+    if [[ "${RC}" -eq 0 ]]; then
+        ((SUCCESS_COUNT++)); echo "✓ Success: ${START_YEAR}-${END_YEAR}"
     else
-        ((FAIL_COUNT++))
-        echo "✗ Failed: ${START_YEAR}-${END_YEAR}"
+        ((FAIL_COUNT++));    echo "✗ Failed (rc=${RC}): ${START_YEAR}-${END_YEAR}"
     fi
+done
+
+# Fold the per-chunk logs into this one so the record stays in a single place.
+echo ""
+for YEAR_RANGE in "${YEAR_RANGES[@]}"; do
+    START_YEAR="${YEAR_RANGE%%:*}"; END_YEAR="${YEAR_RANGE##*:}"
+    CHUNK_LOG="${CHUNK_LOG_DIR}/convert_${EXP_NAME}_${DATASET}_${START_YEAR}-${END_YEAR}.log"
+    echo "───────────────────────────────────────────────────────────────────────────────"
+    echo "Chunk ${START_YEAR}-${END_YEAR}"
+    echo "───────────────────────────────────────────────────────────────────────────────"
+    cat "${CHUNK_LOG}" 2>/dev/null
     echo ""
 done
 
