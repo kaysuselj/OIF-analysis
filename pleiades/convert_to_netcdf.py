@@ -211,14 +211,15 @@ DATASETS = {
     },
     # ── OIF Efficiency Analysis Datasets ──────────────────────────────────────
     'efficiency_core': {
-        'prefixes':        ['primProd', 'CO2_flux', 'pCO2', 'DIC', 'POC', 'POSi',
-                            'POFe', 'PIC', 'FeT', 'NO3', 'PO4', 'SiO2', 'DOC'],
+        'prefixes':        ['primProd', 'CO2_flux', 'pCO2',
+                            'DIC', 'NO3', 'PO4', 'FeT', 'SiO2', 'DOC',
+                            'POC', 'POFe', 'POSi', 'PIC'],
         'extra_variables': _extra_efficiency_core,
         'output_file':     'efficiency_core.nc',
         'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
                             'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC',
                             'TRAC12': 'POC', 'TRAC15': 'POFe', 'TRAC16': 'POSi',
-                            'TRAC17': 'PIC', 'fluxCO2': 'CO2_flux', 'PP': 'NPP'},
+                            'TRAC17': 'PIC', 'PP': 'NPP'},
     },
     'pft_biomass': {
         'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',
