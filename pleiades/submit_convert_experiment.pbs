@@ -25,7 +25,7 @@
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/OIF-analysis/pleiades"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
-K_MAX=10
+K_MAX=30  # Changed from 10 to reach 1000m depth for export ratio analysis
 
 # Concurrency. Each pft_lim task peaks near 5.2 GB resident, so keep
 # NCONC * 5.2 GB under the 180 GB request: 24 -> ~125 GB. Raising it past ~30 buys
@@ -40,8 +40,10 @@ export OPENBLAS_NUM_THREADS=1
 
 # Longest-processing-time-first: launch the pft_lim datasets before the cheap ones
 # so a 271 s chunk never starts last and stretches the makespan.
+# OIF efficiency datasets added: efficiency_core (essential), pft_biomass, fe_budget (optional)
 ALL_DATASETS=(pft_lim1 pft_lim2 pft_lim3 pft_lim4 pft_lim5
-              nutrients carbon_tracers co2)
+              nutrients carbon_tracers co2
+              efficiency_core pft_biomass fe_budget)
 
 YEAR_RANGES=(
     "1992:1996"
@@ -59,12 +61,15 @@ if [[ -z "${EXP_NAME}" ]]; then
     exit 1
 fi
 
-# Sea ice only exists for the control experiment.
+# Sea ice and physical fields only for control experiment (physical doesn't change with Fe).
 if [[ -n "${DATASET}" ]]; then
     DATASETS=("${DATASET}")
 else
     DATASETS=("${ALL_DATASETS[@]}")
-    [[ "${EXP_NAME}" == "control" ]] && DATASETS+=("sea_ice")
+    if [[ "${EXP_NAME}" == "control" ]]; then
+        DATASETS+=("sea_ice")
+        DATASETS+=("physical")
+    fi
 fi
 
 LOG_DIR="/home5/ksuselj1/nobackup/OIF/logs"

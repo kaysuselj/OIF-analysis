@@ -124,6 +124,55 @@ _extra_sea_ice = {
                    attrs={'long_name': 'Sea Ice Area Fraction', 'units': 'fraction'}),
 }
 
+# ── OIF Efficiency Analysis Variables ─────────────────────────────────────────
+# Core diagnostics for computing η_upt, η_exp, η_dur, η_as
+_extra_efficiency_core = {
+    'TRAC01': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Dissolved Inorganic Carbon', 'units': 'mmol C m-3'}),
+    'TRAC02': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Nitrate', 'units': 'mmol N m-3'}),
+    'TRAC05': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Phosphate', 'units': 'mmol P m-3'}),
+    'TRAC06': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Total dissolved iron', 'units': 'mmol Fe m-3'}),
+    'TRAC07': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Silicate', 'units': 'mmol Si m-3'}),
+    'TRAC08': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Dissolved Organic Carbon', 'units': 'mmol C m-3'}),
+    'TRAC12': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Particulate Organic Carbon', 'units': 'mmol C m-3'}),
+    'TRAC15': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Particulate Organic Iron', 'units': 'mmol Fe m-3'}),
+    'TRAC16': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Particulate Organic Silica (opal)', 'units': 'mmol Si m-3'}),
+    'TRAC17': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'Particulate Inorganic Carbon (calcite)', 'units': 'mmol C m-3'}),
+}
+
+# PFT biomass for community composition analysis
+_extra_pft_biomass = {
+    'TRAC20': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT1 (diatom) biomass', 'units': 'mmol C m-3'}),
+    'TRAC21': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT2 biomass', 'units': 'mmol C m-3'}),
+    'TRAC22': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT3 (small phyto) biomass', 'units': 'mmol C m-3'}),
+    'TRAC23': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT4 biomass', 'units': 'mmol C m-3'}),
+    'TRAC24': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT5 biomass', 'units': 'mmol C m-3'}),
+    'TRAC27': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT1 chlorophyll', 'units': 'mg Chl m-3'}),
+    'TRAC28': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT2 chlorophyll', 'units': 'mg Chl m-3'}),
+    'TRAC29': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT3 chlorophyll', 'units': 'mg Chl m-3'}),
+    'TRAC30': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT4 chlorophyll', 'units': 'mg Chl m-3'}),
+    'TRAC31': dict(dims=['k', 'j', 'i'],
+                   attrs={'long_name': 'PFT5 chlorophyll', 'units': 'mg Chl m-3'}),
+}
+
 # ── Dataset definitions ───────────────────────────────────────────────────────
 # Each key → one NetCDF output file.
 # To add a new group: append an entry here and define _extra_* above if needed.
@@ -158,6 +207,39 @@ DATASETS = {
         'prefixes':        ['SIarea'],
         'extra_variables': _extra_sea_ice,
         'output_file':     'sea_ice.nc',
+        'rename':          {},
+    },
+    # ── OIF Efficiency Analysis Datasets ──────────────────────────────────────
+    'efficiency_core': {
+        'prefixes':        ['primProd', 'CO2_flux', 'pCO2', 'DIC', 'POC', 'POSi',
+                            'POFe', 'PIC', 'FeT', 'NO3', 'PO4', 'SiO2', 'DOC'],
+        'extra_variables': _extra_efficiency_core,
+        'output_file':     'efficiency_core.nc',
+        'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
+                            'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC',
+                            'TRAC12': 'POC', 'TRAC15': 'POFe', 'TRAC16': 'POSi',
+                            'TRAC17': 'PIC', 'fluxCO2': 'CO2_flux', 'PP': 'NPP'},
+    },
+    'pft_biomass': {
+        'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',
+                            'Chl1', 'Chl2', 'Chl3', 'Chl4', 'Chl5'],
+        'extra_variables': _extra_pft_biomass,
+        'output_file':     'pft_biomass.nc',
+        'rename':          {'TRAC20': 'c01', 'TRAC21': 'c02', 'TRAC22': 'c03',
+                            'TRAC23': 'c04', 'TRAC24': 'c05', 'TRAC27': 'Chl01',
+                            'TRAC28': 'Chl02', 'TRAC29': 'Chl03', 'TRAC30': 'Chl04',
+                            'TRAC31': 'Chl05'},
+    },
+    'physical': {
+        'prefixes':        ['mldDepth', 'THETA'],
+        'extra_variables': {},
+        'output_file':     'physical.nc',
+        'rename':          {},
+    },
+    'fe_budget': {
+        'prefixes':        ['average_Fe_3d', 'average_Fe_darwin_2d'],
+        'extra_variables': {},
+        'output_file':     'fe_budget.nc',
         'rename':          {},
     },
     # ── Add new groups below ──────────────────────────────────────────────────
