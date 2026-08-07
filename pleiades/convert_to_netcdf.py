@@ -101,7 +101,7 @@ _extra_nutrients = {
 # adjust the keys below if xmitgcm reports unknown variables.
 _extra_co2 = {
     'fluxCO2': dict(dims=['j', 'i'],
-                    attrs={'long_name': 'Air-sea CO2 flux', 'units': 'mol C m-2 s-1'}),
+                    attrs={'long_name': 'Air-sea CO2 flux', 'units': 'mmol C m-2 s-1'}),
     'pCO2':    dict(dims=['k', 'j', 'i'],
                     attrs={'long_name': 'Surface pCO2',     'units': 'uatm'}),
 }

@@ -17,7 +17,7 @@
 # the makespan is set by the longest single chunk (61 months of pft_lim = ~271 s),
 # because HDF5 serialises compression within a chunk. So ~4.5 min + ~30 s startup.
 # Request ~2x that.
-#PBS -l walltime=00:12:00
+#PBS -l walltime=02:00:00
 #PBS -q normal
 #PBS -j oe
 #PBS -W group_list=s1353
