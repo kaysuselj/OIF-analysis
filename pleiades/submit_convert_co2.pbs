@@ -16,7 +16,7 @@
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/post_script"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
-K_MAX=10
+K_MAX=38  # Changed from 30 to 38: covers 0-2174m, extending past 2000m depth
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ -z "${EXP_NAME}" ]]; then

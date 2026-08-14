@@ -5,7 +5,7 @@ Convert ECCO-Darwin MDS binary output to NetCDF.
 Usage
 -----
     # Convert all years, all datasets
-    python convert_to_netcdf.py <data_dir> [--k_max 10]
+    python convert_to_netcdf.py <data_dir> [--k_max 38]
 
     # Convert specific 5-year period (only reads those iterations)
     python convert_to_netcdf.py <data_dir> --start-year 1992 --end-year 1996
@@ -244,6 +244,27 @@ DATASETS = {
         'output_file':     'efficiency_dic_nutrients.nc',
         'rename':          {'TRAC01': 'DIC', 'TRAC02': 'NO3', 'TRAC05': 'PO4',
                            'TRAC06': 'FeT', 'TRAC07': 'SiO2', 'TRAC08': 'DOC'},
+    },
+    # Split 4: Side effects analysis (Si exhaustion, nutrient robbing, deoxygenation)
+    'side_effects': {
+        'prefixes':        ['O2', 'DIC', 'NO3', 'PO4', 'SiO2', 'primProd'],
+        'extra_variables': {
+            'TRAC19': dict(dims=['k', 'j', 'i'],
+                          attrs={'long_name': 'Dissolved Oxygen', 'units': 'mmol O2 m-3'}),
+            'TRAC01': dict(dims=['k', 'j', 'i'],
+                          attrs={'long_name': 'Dissolved Inorganic Carbon', 'units': 'mmol C m-3'}),
+            'TRAC02': dict(dims=['k', 'j', 'i'],
+                          attrs={'long_name': 'Nitrate', 'units': 'mmol N m-3'}),
+            'TRAC05': dict(dims=['k', 'j', 'i'],
+                          attrs={'long_name': 'Phosphate', 'units': 'mmol P m-3'}),
+            'TRAC07': dict(dims=['k', 'j', 'i'],
+                          attrs={'long_name': 'Silicate', 'units': 'mmol Si m-3'}),
+            'PP': dict(dims=['k', 'j', 'i'],
+                      attrs={'long_name': 'Primary Production', 'units': 'mmol C m-3 s-1'}),
+        },
+        'output_file':     'side_effects.nc',
+        'rename':          {'TRAC19': 'O2', 'TRAC01': 'DIC', 'TRAC02': 'NO3',
+                           'TRAC05': 'PO4', 'TRAC07': 'SiO2', 'PP': 'NPP'},
     },
     'pft_biomass': {
         'prefixes':        ['c1', 'c2', 'c3', 'c4', 'c5',
@@ -590,8 +611,8 @@ def main():
         'data_dir',
         help='Directory containing ECCO-Darwin binary files')
     parser.add_argument(
-        '--k_max', type=int, default=10,
-        help='Number of vertical levels to save for 3D variables (default: 10)')
+        '--k_max', type=int, default=38,
+        help='Number of vertical levels to save for 3D variables (default: 38, covers 0-2174m including mesopelagic and top of bathypelagic)')
     parser.add_argument(
         '--datasets', nargs='*', default=None,
         metavar='NAME',

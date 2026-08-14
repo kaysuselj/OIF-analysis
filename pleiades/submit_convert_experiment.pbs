@@ -25,7 +25,7 @@
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/OIF-analysis/pleiades"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
-K_MAX=30  # Changed from 10 to reach 1000m depth for export ratio analysis
+K_MAX=38  # Changed from 30 to 38: covers 0-2174m, extending past 2000m depth
 
 # Concurrency. Each pft_lim task peaks near 5.2 GB resident, so keep
 # NCONC * 5.2 GB under the 180 GB request: 24 -> ~125 GB. Raising it past ~30 buys

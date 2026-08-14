@@ -15,7 +15,7 @@ Usage
 -----
 Add this to your existing convert_to_netcdf.py DATASETS dict, or run standalone:
 
-    python data_subset_for_analysis.py <data_dir> --k_max 10 \
+    python data_subset_for_analysis.py <data_dir> --k_max 30 \
         --start-year 1992 --end-year 2001 --datasets efficiency_core
 
 Output
@@ -26,13 +26,15 @@ Creates NetCDF files optimized for laptop analysis:
   - pft_biomass.nc: PFT biomass (c01-c05) for community composition
   - physical.nc: MXLDEPTH, THETA (from baseline only, copy to all experiments)
 
-File sizes (10 years, k_max=10, LLC90):
-  - efficiency_core.nc: ~15-20 GB (most important)
-  - fe_budget.nc: ~8-10 GB
-  - pft_biomass.nc: ~5-8 GB
-  - physical.nc: ~2-3 GB (baseline only)
+File sizes (10 years, k_max=30, LLC90):
+  - efficiency_core.nc: ~40-50 GB (most important)
+  - fe_budget.nc: ~20-25 GB
+  - pft_biomass.nc: ~15-20 GB
+  - physical.nc: ~6-8 GB (baseline only)
 
-Total: ~30-40 GB per experiment (vs ~100-200 GB for full output)
+Total: ~80-100 GB per experiment (vs ~300-400 GB for full depth k_max=50)
+
+Note: k_max=30 covers 0-1100m including mesopelagic (100-1000m) needed for O2 analysis
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -253,7 +255,7 @@ To add these datasets to your existing convert_to_netcdf.py:
 4. Run the conversion on Pleiades:
 
    # For ALL efficiency datasets:
-   python convert_to_netcdf.py <data_dir> --k_max 10 \\
+   python convert_to_netcdf.py <data_dir> --k_max 30 \\
        --datasets efficiency_core fe_budget pft_biomass physical
 
    # Or one at a time:
@@ -273,16 +275,17 @@ To add these datasets to your existing convert_to_netcdf.py:
    cd ~/Desktop/Projects/OIF/data/
    tar -xzf efficiency_data_baseline.tar.gz
 
-6. File sizes (10 years, k_max=10):
-   - efficiency_core.nc: ~15-20 GB (MUST HAVE)
-   - fe_budget.nc: ~8-10 GB (optional, for Fe recycling analysis)
-   - pft_biomass.nc: ~5-8 GB (optional, biomass fractions)
-   - physical.nc: ~2-3 GB (baseline only, copy to all experiments)
+6. File sizes (10 years, k_max=30):
+   - efficiency_core.nc: ~40-50 GB (MUST HAVE)
+   - fe_budget.nc: ~20-25 GB (optional, for Fe recycling analysis)
+   - pft_biomass.nc: ~15-20 GB (optional, biomass fractions)
+   - physical.nc: ~6-8 GB (baseline only, copy to all experiments)
 
 7. Storage optimization:
-   - Use k_max=10 (top 10 layers = ~200m depth, sufficient for surface processes)
+   - Default k_max=30 (top 30 layers = 0-1100m, includes mesopelagic for O2 analysis)
    - Compress: tar -czf saves ~30-50% space
-   - Only copy efficiency_core.nc if storage is tight (~20 GB per experiment)
+   - Only copy efficiency_core.nc if storage is tight (~50 GB per experiment)
+   - For surface-only analysis (no O2), can use --k_max 10 (~20 GB per experiment)
 
 8. For physical fields (MXLDEPTH, THETA):
    - Run ONCE on baseline: --datasets physical

@@ -25,7 +25,7 @@
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/OIF-analysis/pleiades"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
-K_MAX=10
+K_MAX=38  # Changed from 30 to 38: covers 0-2174m, extending past 2000m depth
 
 # The year chunks are independent (disjoint iterations, disjoint output files), so
 # run them side by side. PBS hands us the whole sky_ele node (40 cores) because
