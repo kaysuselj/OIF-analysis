@@ -54,7 +54,8 @@
 # overwritten. Scope reruns with STREAMS= to avoid redoing finished work.
 #
 # Safety: this script never deletes anything from the source tree. It writes
-# tarballs to a staging dir, ships them to Lou with shiftc --verify, deletes only
+# tarballs to a staging dir, ships them to Lou with shiftc (which checksums both
+# ends by default), deletes only
 # the staging copy, and reports what landed. Delete the raw files yourself only
 # after you've confirmed the archive AND validated the NetCDF conversion you
 # care about.
@@ -230,14 +231,16 @@ for EXP in "$@"; do
             fi
             rm -f "${FILELIST}"
 
-            # --verify makes shiftc checksum both ends; worth it before you delete
-            # the only copy of anything. (--create-tar=no: we already tarred.)
+            # shiftc checksums both ends BY DEFAULT (disable with --no-verify), so we
+            # do not pass a --verify flag -- there isn't one. We also do not pass
+            # --create-tar: that tells shiftc to build a tar itself, and we already
+            # have one. --wait blocks and returns 0 on success, 1 on failure.
+            XFER_OK=0
+            XFER_ERR=$(mktemp "${TMPDIR:-/tmp}/xfererr.XXXXXX")
             if [[ "${XFER}" == "shiftc" ]]; then
-                XFER_OK=0
-                shiftc --wait --verify --create-tar=no "${TAR}" "${DEST}/" >/dev/null 2>&1 && XFER_OK=1
+                shiftc --wait "${TAR}" "${DEST}/" >"${XFER_ERR}" 2>&1 && XFER_OK=1
             else
-                XFER_OK=0
-                cp -p "${TAR}" "${DEST}/" && XFER_OK=1
+                cp -p "${TAR}" "${DEST}/" >"${XFER_ERR}" 2>&1 && XFER_OK=1
             fi
 
             if [[ ${XFER_OK} -eq 1 ]]; then
@@ -246,8 +249,16 @@ for EXP in "$@"; do
                 TOTAL_TARS=$((TOTAL_TARS + 1))
             else
                 echo "${XFER} FAILED (tar kept at ${TAR})"
+                # Surface the actual error instead of swallowing it -- a silent
+                # "FAILED" is useless for diagnosis.
+                if [[ -s "${XFER_ERR}" ]]; then
+                    sed 's/^/      | /' "${XFER_ERR}"
+                else
+                    echo "      | (no output from ${XFER})"
+                fi
                 TOTAL_FAIL=$((TOTAL_FAIL + 1))
             fi
+            rm -f "${XFER_ERR}"
         # Redirect from the summary file rather than piping into the loop: a pipe
         # would run the loop in a subshell and the TOTAL_* counters would not survive.
         done < "${SUMMARY}"
@@ -272,7 +283,11 @@ echo "Watch your Lou inode usage (300,000 hard limit) — per-prefix tars keep t
 echo "  quota -v          # or: dmfquota"
 echo ""
 echo "To retrieve one variable later (run from an LFE):"
-echo "  ${XFER} ${LOU_BASE}/<exp>/<stream>/<exp>_<stream>_<PREFIX>.tar ${NOBACKUP_BASE}/<exp>/run/diags/<stream>/"
+if [[ "${XFER}" == "shiftc" ]]; then
+    echo "  shiftc --wait ${LOU_BASE}/<exp>/<stream>/<exp>_<stream>_<PREFIX>.tar ${NOBACKUP_BASE}/<exp>/run/diags/<stream>/"
+else
+    echo "  cp ${LOU_BASE}/<exp>/<stream>/<exp>_<stream>_<PREFIX>.tar ${NOBACKUP_BASE}/<exp>/run/diags/<stream>/"
+fi
 echo "  cd ${NOBACKUP_BASE}/<exp>/run/diags/<stream>/ && tar -xf <exp>_<stream>_<PREFIX>.tar"
 
 [[ ${TOTAL_FAIL} -gt 0 ]] && exit 1
