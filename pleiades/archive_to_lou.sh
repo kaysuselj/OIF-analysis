@@ -23,10 +23,41 @@
 #   ./archive_to_lou.sh control exp1 exp5            # several
 #   STREAMS="monthly daily" ./archive_to_lou.sh exp1 # subset of streams
 #
-# Safety: this script never deletes anything. It writes tarballs to a staging
-# dir, ships them to Lou with shiftc --verify, and reports what landed. Delete
-# the raw files yourself only after you've confirmed the archive AND validated
-# the NetCDF conversion you care about.
+# ── RUN IT DETACHED (tmux) ─────────────────────────────────────────────────────
+# A full archive moves hundreds of GB to tape and can run for hours, so do NOT
+# run it on a bare login shell -- an SSH drop would kill it mid-transfer. Use tmux
+# so the work keeps going after you disconnect and you can reattach to watch:
+#
+#   ssh lfe
+#   tmux new -s archive                  # start a named session
+#   cd /path/to/scripts/pleiades
+#   ./archive_to_lou.sh control 2>&1 | tee ~/archive_control.log
+#
+#   # detach and leave it running:   press Ctrl-b   then   d
+#   # you can now log out entirely.
+#
+#   # come back later:
+#   ssh lfe
+#   tmux ls                              # list sessions
+#   tmux attach -t archive               # reattach
+#
+#   # inside tmux:  Ctrl-b d = detach,  Ctrl-b [ = scroll back (q to exit scroll)
+#   # when finished, just:  exit
+#
+# If tmux is unavailable, `screen -S archive` works the same way (detach is
+# Ctrl-a then d, reattach with `screen -r archive`). Failing that:
+#   nohup ./archive_to_lou.sh control > ~/archive_control.log 2>&1 &
+#   tail -f ~/archive_control.log
+#
+# Note: interrupted runs are safe to re-run (nothing is deleted), but there is no
+# skip-existing logic yet -- already-archived prefixes get re-tarred and
+# overwritten. Scope reruns with STREAMS= to avoid redoing finished work.
+#
+# Safety: this script never deletes anything from the source tree. It writes
+# tarballs to a staging dir, ships them to Lou with shiftc --verify, deletes only
+# the staging copy, and reports what landed. Delete the raw files yourself only
+# after you've confirmed the archive AND validated the NetCDF conversion you
+# care about.
 # ═══════════════════════════════════════════════════════════════════════════════
 set -uo pipefail
 
@@ -100,6 +131,12 @@ echo "  Staging     : ${STAGING_BASE}"
 echo "  Destination : ${LOU_BASE}/<exp>/<stream>/   (Lou home)"
 echo "  Transfer    : ${XFER}"
 [[ ${DRY_RUN} -eq 1 ]] && echo "  MODE        : DRY RUN (nothing written or transferred)"
+# Nudge toward a detached session for real runs: these transfers are long and an
+# SSH drop would kill an attached one. Only warn when not already inside tmux/screen.
+if [[ ${DRY_RUN} -eq 0 && -z "${TMUX:-}" && -z "${STY:-}" ]]; then
+    echo "  WARNING     : not running inside tmux/screen — an SSH drop will kill this."
+    echo "                Consider: tmux new -s archive   (see header for details)"
+fi
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -117,23 +154,36 @@ for EXP in "$@"; do
         SRC="${EXP_DIR}/${STREAM}"
         [[ -d "${SRC}" ]] || { echo "  skip ${EXP}/${STREAM}: no such directory"; continue; }
 
-        # Distinct variable prefixes: strip the .<iter>.data/.meta suffix.
-        # MDS names look like  mldDepth.0000271740.data
-        # Deliberately avoids `mapfile` (bash 4+) and `find -printf` (GNU only) so
-        # this also runs under the bash 3.2 / BSD userland on a Mac for testing.
-        PREFIX_LIST=$(
-            find "${SRC}" -maxdepth 1 -type f \( -name '*.data' -o -name '*.meta' \) 2>/dev/null \
-                | sed -e 's|.*/||' \
-                | sed -E 's/\.[0-9]{6,}\.(data|meta)$//' \
-                | sort -u
-        )
+        # Scan the stream directory ONCE. These directories are huge (observed
+        # 140k+ files in a single 3-hourly prefix), so anything that re-walks the
+        # tree per prefix -- or expands a file list onto a command line -- either
+        # takes minutes per prefix on Lustre or blows past ARG_MAX. We therefore
+        # build one listing here and derive prefixes, per-prefix file counts and
+        # per-prefix byte totals from it in a single awk pass.
+        #
+        # `ls -lL` rather than `find -printf`/`stat -c`: portable, one syscall pass,
+        # and gives us name+size together.
+        echo "  scanning ${SRC} ..."
+        SUMMARY=$(mktemp "${TMPDIR:-/tmp}/mdssum.XXXXXX")
+        LISTING="${SUMMARY}.files"       # kept: reused to build per-prefix tar lists
+        ls -lL "${SRC}" 2>/dev/null | awk '$NF ~ /\.(data|meta)$/ {print $5, $NF}' > "${LISTING}"
 
-        if [[ -z "${PREFIX_LIST}" ]]; then
+        if [[ ! -s "${LISTING}" ]]; then
             echo "  skip ${EXP}/${STREAM}: no MDS .data/.meta files found"
+            rm -f "${LISTING}" "${SUMMARY}"
             continue
         fi
 
-        NPREFIX=$(printf '%s\n' "${PREFIX_LIST}" | wc -l | tr -d ' ')
+        # prefix -> "<nfiles> <bytes>" summary, computed in one pass.
+        awk '{
+            name = $2
+            sub(/\.[0-9]{6,}\.(data|meta)$/, "", name)
+            n[name]++
+            b[name] += $1
+        }
+        END { for (p in n) printf "%s %d %d\n", p, n[p], b[p] }' "${LISTING}" | sort > "${SUMMARY}"
+
+        NPREFIX=$(wc -l < "${SUMMARY}" | tr -d ' ')
         echo "── ${EXP}/${STREAM}: ${NPREFIX} prefixes ────────────────────────"
 
         STAGE="${STAGING_BASE}/${EXP}/${STREAM}"
@@ -141,31 +191,44 @@ for EXP in "$@"; do
         [[ ${DRY_RUN} -eq 0 ]] && mkdir -p "${STAGE}"
         [[ ${DRY_RUN} -eq 0 ]] && mkdir -p "${DEST}"
 
-        while IFS= read -r PREFIX; do
+        while read -r PREFIX NFILES NBYTES; do
             [[ -n "${PREFIX}" ]] || continue
-            NFILES=$(find "${SRC}" -maxdepth 1 -type f -name "${PREFIX}.*" | wc -l)
-            SIZE=$(du -csh $(find "${SRC}" -maxdepth 1 -type f -name "${PREFIX}.*") 2>/dev/null \
-                   | tail -1 | awk '{print $1}')
+            SIZE=$(awk -v b="${NBYTES}" 'BEGIN{
+                split("B KB MB GB TB PB", u, " "); i=1
+                while (b >= 1024 && i < 6) { b /= 1024; i++ }
+                printf "%.1f%s", b, u[i]
+            }')
             TAR="${STAGE}/${EXP}_${STREAM}_${PREFIX}.tar"
 
             if [[ ${DRY_RUN} -eq 1 ]]; then
-                printf "  [dry-run] %-24s %5s files  %8s  ->  %s\n" \
-                       "${PREFIX}" "${NFILES}" "${SIZE:-?}" "${DEST}/$(basename "${TAR}")"
+                printf "  [dry-run] %-24s %8s files  %9s  ->  %s\n" \
+                       "${PREFIX}" "${NFILES}" "${SIZE}" "$(basename "${TAR}")"
                 TOTAL_TARS=$((TOTAL_TARS + 1))
                 continue
             fi
 
-            printf "  %-24s %5s files  %8s ... " "${PREFIX}" "${NFILES}" "${SIZE:-?}"
+            printf "  %-24s %8s files  %9s ... " "${PREFIX}" "${NFILES}" "${SIZE}"
 
-            # -C so paths inside the tar are relative to the stream dir, which makes
-            # extraction straightforward: tar -xf ... -C <target stream dir>
-            if ! tar -cf "${TAR}" -C "${SRC}" \
-                    $(cd "${SRC}" && ls -1 "${PREFIX}".*[0-9].data "${PREFIX}".*[0-9].meta 2>/dev/null); then
+            # Feed tar a file LIST (-T), never an expanded argv: a single prefix can
+            # hold 100k+ files, which would exceed ARG_MAX. -C so paths inside the tar
+            # are relative to the stream dir, making extraction a plain
+            #   tar -xf <tar> -C <target stream dir>
+            FILELIST=$(mktemp "${TMPDIR:-/tmp}/mdsfiles.XXXXXX")
+            awk -v p="${PREFIX}" '
+                $2 ~ /\.(data|meta)$/ {
+                    name = $2
+                    stripped = name
+                    sub(/\.[0-9]{6,}\.(data|meta)$/, "", stripped)
+                    if (stripped == p) print name
+                }' "${SUMMARY}.files" > "${FILELIST}"
+
+            if ! tar -cf "${TAR}" -C "${SRC}" -T "${FILELIST}"; then
                 echo "TAR FAILED"
                 TOTAL_FAIL=$((TOTAL_FAIL + 1))
-                rm -f "${TAR}"
+                rm -f "${TAR}" "${FILELIST}"
                 continue
             fi
+            rm -f "${FILELIST}"
 
             # --verify makes shiftc checksum both ends; worth it before you delete
             # the only copy of anything. (--create-tar=no: we already tarred.)
@@ -185,9 +248,11 @@ for EXP in "$@"; do
                 echo "${XFER} FAILED (tar kept at ${TAR})"
                 TOTAL_FAIL=$((TOTAL_FAIL + 1))
             fi
-        # Feed the prefix list via a here-string rather than a pipe: a pipe would put
-        # the loop in a subshell and the TOTAL_* counters would not survive it.
-        done <<< "${PREFIX_LIST}"
+        # Redirect from the summary file rather than piping into the loop: a pipe
+        # would run the loop in a subshell and the TOTAL_* counters would not survive.
+        done < "${SUMMARY}"
+
+        rm -f "${SUMMARY}" "${LISTING}"
         echo ""
     done
 done
