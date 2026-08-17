@@ -4,8 +4,11 @@
 #
 # Usage (via submit_convert_parallel.sh):
 #   qsub -v EXP_NAME=control submit_convert_experiment.pbs
-#   qsub -v EXP_NAME=exp1,NCONC=16 submit_convert_experiment.pbs
+#   qsub -v EXP_NAME=exp1,NCONC=4 submit_convert_experiment.pbs   # lower if OOM
 #   qsub -v EXP_NAME=exp1,DATASET=pft_lim3 submit_convert_experiment.pbs   # subset
+#
+# NOTE: NCONC defaults to 8. Values >=12 have been observed to OOM/hang the node
+# at K_MAX=38 -- raise it only after fixing _materialize() (see NCONC comment below).
 #
 # Every (dataset, 5-year chunk) pair is an independent task — disjoint iterations,
 # disjoint output files — so they all run concurrently on the one node PBS gives us.
@@ -14,10 +17,12 @@
 #PBS -l select=1:ncpus=40:mem=180gb:model=sky_ele
 # Work per experiment (measured 2026-07-09, ~4.4 core-s/month for pft_lim, which is
 # 81% of the total): control ~6300 core-s, exp1/exp5 ~3650 core-s each. At NCONC=24
-# the makespan is set by the longest single chunk (61 months of pft_lim = ~271 s),
-# because HDF5 serialises compression within a chunk. So ~4.5 min + ~30 s startup.
-# Request ~2x that.
-#PBS -l walltime=02:00:00
+# the makespan was set by the longest single chunk (61 months of pft_lim = ~271 s),
+# because HDF5 serialises compression within a chunk: ~4.5 min + ~30 s startup.
+# At NCONC=8 (see below) the 91 tasks run in ~12 waves instead of ~4, so budget
+# ~12 * 271 s ~= 55 min plus per-task startup; K_MAX=38 also adds ~27% over the
+# K_MAX=30 numbers above. 04:00:00 keeps ~2x margin on that.
+#PBS -l walltime=04:00:00
 #PBS -q normal
 #PBS -j oe
 #PBS -W group_list=s1353
@@ -27,10 +32,15 @@ BASE_DIR="/home5/ksuselj1/nobackup/OIF/ED_experiments/OIF-analysis/pleiades"
 SCRIPT="${BASE_DIR}/convert_to_netcdf.py"
 K_MAX=38  # Changed from 30 to 38: covers 0-2174m, extending past 2000m depth
 
-# Concurrency. Each pft_lim task peaks near 5.2 GB resident, so keep
-# NCONC * 5.2 GB under the 180 GB request: 24 -> ~125 GB. Raising it past ~30 buys
-# little, since the longest chunk is the floor.
-NCONC="${NCONC:-24}"
+# Concurrency. Lowered 24 -> 8 (2026-08-17): with K_MAX=38 the job OOM'd/hung the
+# node at 24 and still failed at 12; 8 runs cleanly. Observed failure between 8 and
+# 12 implies a real per-task peak of ~15-22 GB against the 180 GB request, well above
+# the 5.2 GB measured at K_MAX=30 -- the extra 8 levels alone don't explain it.
+# Root cause is most likely _materialize(max_inmem_gb=32.0) in convert_to_netcdf.py:
+# it decides per task, with no knowledge of NCONC, so N tasks can each load a whole
+# chunk and claim up to N * 32 GB. Fixing that (lower the threshold to force the
+# streaming path) would let NCONC go back up; until then keep it at 8.
+NCONC="${NCONC:-8}"
 
 # Each task is single-threaded and CPU-bound in zlib; stop numpy/BLAS from spawning
 # a thread per core in every one of them.

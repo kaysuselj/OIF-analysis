@@ -8,7 +8,10 @@
 # Usage:
 #   ./submit_convert_parallel.sh control
 #   ./submit_convert_parallel.sh control exp1 exp5
-#   NCONC=16 ./submit_convert_parallel.sh control        # lower concurrency
+#   NCONC=4 ./submit_convert_parallel.sh control         # lower concurrency
+#
+# NCONC defaults to 8 in submit_convert_experiment.pbs. Values >=12 have been seen
+# to OOM/hang the node at K_MAX=38, so only raise it deliberately.
 #
 # Sea ice is only converted for the control experiment.
 # ═══════════════════════════════════════════════════════════════════════════════
